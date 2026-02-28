@@ -1,0 +1,578 @@
+==============================
+VANTYX PROJECT HANDOFF
+==============================
+
+--- SYSTEM INFO ---
+Date: Sáb 28 Fev 2026 00:37:10 -03
+User: fernandaandreasiflores
+Directory: /Users/fernandaandreasiflores/vantyx
+
+--- PYTHON ---
+/Users/fernandaandreasiflores/vantyx-handoff: line 18: python: command not found
+
+--- GIT STATUS ---
+fatal: not a git repository (or any of the parent directories): .git
+fatal: not a git repository (or any of the parent directories): .git
+
+--- POSTGRES STATUS ---
+127.0.0.1:5432 - aceitando conexões
+
+--- API HEALTH ---
+{"status":"ok"}
+--- OPS DAILY ---
+{"date":"today","kpis":{"leads_total":0,"leads_hot":0},"top_leads":[],"notes":"Modo seguro estabilizado"}
+
+================ FILE: settings.py ================
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    DATABASE_URL: str = "postgresql+psycopg://vantyx:vantyx_pass@localhost:5432/vantyx"
+    META_VERIFY_TOKEN: str = "troque_este_token"
+
+settings = Settings()
+
+
+
+================ FILE: db.py ================
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from .settings import settings
+
+engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+class Base(DeclarativeBase):
+    pass
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+
+================ FILE: models.py ================
+import uuid
+from sqlalchemy import Column, String, Date, Integer, Numeric, DateTime
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.sql import func
+from .db import Base
+
+class Lead(Base):
+    __tablename__ = "leads"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    nome = Column(String, nullable=False)
+    telefone = Column(String)
+    email = Column(String)
+
+    origem = Column(String, nullable=False, default="meta")
+    perfil = Column(String)
+    budget = Column(Numeric(14, 2))
+    etapa = Column(String, nullable=False, default="Novo Lead")
+    interesse = Column(Integer)
+    urgencia = Column(Integer)
+    ultimo_contato = Column(Date)
+
+    meta_form_id = Column(String)
+    meta_leadgen_id = Column(String)
+    campaign_id = Column(String)
+    campaign_name = Column(String)
+    adset_id = Column(String)
+    adset_name = Column(String)
+    ad_id = Column(String)
+    ad_name = Column(String)
+
+    raw = Column(JSONB)
+
+
+
+================ FILE: schemas.py ================
+from pydantic import BaseModel
+from typing import Optional, Any, Dict
+from uuid import UUID
+
+class MetaLeadIn(BaseModel):
+    nome: str
+    telefone: Optional[str] = None
+    email: Optional[str] = None
+
+    perfil: Optional[str] = None
+    budget: Optional[float] = None
+
+    meta_form_id: Optional[str] = None
+    meta_leadgen_id: Optional[str] = None
+
+    campaign_id: Optional[str] = None
+    campaign_name: Optional[str] = None
+    adset_id: Optional[str] = None
+    adset_name: Optional[str] = None
+    ad_id: Optional[str] = None
+    ad_name: Optional[str] = None
+
+    raw: Optional[Dict[str, Any]] = None
+
+class LeadUpdate(BaseModel):
+    etapa: Optional[str] = None
+    interesse: Optional[int] = None
+    urgencia: Optional[int] = None
+    budget: Optional[float] = None  # opcional (se quiser usar como valor estimado)
+
+class LeadOut(BaseModel):
+    id: UUID
+    nome: str
+    telefone: str | None = None
+    origem: str
+
+class Config:
+    orm_mode = True
+
+from typing import Optional
+from datetime import date
+from pydantic import BaseModel
+
+class LeadUpsertIn(BaseModel):
+    nome: Optional[str] = None
+    telefone: Optional[str] = None
+    email: Optional[str] = None
+    origem: Optional[str] = None
+    perfil: Optional[str] = None
+    budget: Optional[float] = None
+    etapa: Optional[str] = None
+    interesse: Optional[int] = None
+    urgencia: Optional[int] = None
+    ultimo_contato: Optional[date] = None
+    raw: Optional[dict] = None
+    meta_leadgen_id: Optional[str] = None
+
+
+================ FILE: main.py ================
+from fastapi import FastAPI, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import desc, case
+from sqlalchemy.sql import func
+
+from .db import Base, engine, get_db
+from .models import Lead
+from .schemas import MetaLeadIn, LeadOut, LeadUpdate, LeadUpsertIn
+from .settings import settings
+
+app = FastAPI(title="Vantyx API", version="0.1.0")
+
+# Base.metadata.create_all(bind=engine)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+app = FastAPI(title="Vantyx API", version="0.1.0")
+
+# cria tabelas (dev)
+Base.metadata.create_all(bind=engine)
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+@app.get("/ops/daily")
+def ops_daily(db: Session = Depends(get_db)):
+    leads_total = db.query(Lead).count()
+
+    rows = (
+        db.query(Lead)
+        .order_by(desc(Lead.created_at))
+        .limit(10)
+        .all()
+    )
+
+    top_leads = []
+    for l in rows:
+        top_leads.append({
+            "id": str(l.id),
+            "nome": l.nome,
+            "telefone": l.telefone,
+            "etapa": l.etapa,
+            "score": 0,
+            "interesse": l.interesse,
+            "urgencia": l.urgencia,
+            "created_at": str(l.created_at),
+        })
+
+    return {
+        "date": "today",
+        "kpis": {
+            "leads_total": int(leads_total),
+            "leads_hot": 0,
+        },
+        "top_leads": top_leads,
+        "notes": "Modo seguro estabilizado",
+    }
+
+@app.get("/leads/recent")
+def leads_recent(limit: int = 10, db: Session = Depends(get_db)):
+    rows = db.query(Lead).order_by(desc(Lead.created_at)).limit(50).all()
+    return [
+        {
+            "id": str(l.id),
+            "nome": l.nome,
+            "telefone": l.telefone,
+            "etapa": l.etapa,
+            "interesse": l.interesse,
+            "urgencia": l.urgencia,
+            "created_at": str(l.created_at),
+            "origem": l.origem,
+        }
+        for l in rows
+    ]
+
+# -----------------------------
+# Meta webhook verify (GET)
+# -----------------------------
+@app.get("/webhook/meta")
+def verify_webhook(
+    hub_mode: str | None = None,
+    hub_verify_token: str | None = None,
+    hub_challenge: str | None = None,
+):
+    if hub_mode == "subscribe" and hub_verify_token == settings.META_VERIFY_TOKEN:
+        return int(hub_challenge) if hub_challenge and hub_challenge.isdigit() else hub_challenge
+    raise HTTPException(status_code=403, detail="Verification failed")
+
+
+# -----------------------------
+# Meta lead ingest (POST)
+# -----------------------------
+@app.post("/webhook/meta/lead", response_model=LeadOut)
+def ingest_meta_lead(payload: MetaLeadIn, db: Session = Depends(get_db)):
+    lead = Lead(
+        nome=payload.nome,
+        telefone=payload.telefone,
+        email=payload.email,
+        origem="meta",
+        perfil=payload.perfil,
+        budget=payload.budget,
+        etapa=payload.etapa or "Novo Lead",
+        interesse=payload.interesse,
+        urgencia=payload.urgencia,
+        ultimo_contato=payload.ultimo_contato,
+        meta_form_id=payload.meta_form_id,
+        meta_leadgen_id=payload.meta_leadgen_id,
+        campaign_id=payload.campaign_id,
+        campaign_name=payload.campaign_name,
+        adset_id=payload.adset_id,
+        adset_name=payload.adset_name,
+        ad_id=payload.ad_id,
+        ad_name=payload.ad_name,
+        raw=payload.raw,
+    )
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    return lead
+
+
+# -----------------------------
+# Upsert (A6 + outros)
+# -----------------------------
+
+@app.post("/leads/upsert", response_model=LeadOut)
+def upsert_lead(payload: LeadUpsertIn, db: Session = Depends(get_db)):
+    def to_int(v):
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return v
+        s = str(v).strip()
+        if s == "":
+            return None
+        try:
+            return int(float(s))
+        except:
+            return None
+
+    def to_decimal(v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float, Decimal)):
+            try:
+                return Decimal(str(v))
+            except:
+                return None
+        s = str(v).strip()
+        if s == "":
+            return None
+        # aceita "R$ 850.000,00" e "850000" e "850.000,00"
+        s = (
+            s.replace("R$", "")
+             .replace("r$", "")
+             .replace(" ", "")
+             .replace(".", "")
+             .replace(",", ".")
+        )
+        try:
+            return Decimal(s)
+        except (InvalidOperation, ValueError):
+            return None
+
+    def to_date(v):
+        if v is None:
+            return None
+        if isinstance(v, date):
+            return v
+        s = str(v).strip()
+        if s == "":
+            return None
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except:
+                pass
+        return None
+
+    lead: Lead | None = None
+
+    # Normaliza tipos (CSV-friendly)
+    interesse = to_int(getattr(payload, "interesse", None))
+    urgencia = to_int(getattr(payload, "urgencia", None))
+    budget = to_decimal(getattr(payload, "budget", None))
+    ultimo_contato = to_date(getattr(payload, "ultimo_contato", None))
+
+    meta_leadgen_id = getattr(payload, "meta_leadgen_id", None)
+    telefone = getattr(payload, "telefone", None)
+
+    # 1) chave forte
+    if meta_leadgen_id:
+        lead = db.query(Lead).filter(Lead.meta_leadgen_id == meta_leadgen_id).first()
+
+    # 2) fallback
+    if not lead and telefone:
+        lead = db.query(Lead).filter(Lead.telefone == telefone).first()
+
+    # cria
+    if not lead:
+        lead = Lead(
+            nome=(payload.nome or "CSV_LEAD"),
+            telefone=telefone,
+            email=getattr(payload, "email", None),
+            origem=(payload.origem or "a6"),
+            perfil=getattr(payload, "perfil", None),
+            budget=budget,
+            etapa=(payload.etapa or "Novo Lead"),
+            interesse=interesse,
+            urgencia=urgencia,
+            ultimo_contato=ultimo_contato,
+            meta_form_id=getattr(payload, "meta_form_id", None),
+            meta_leadgen_id=meta_leadgen_id,
+            campaign_id=getattr(payload, "campaign_id", None),
+            campaign_name=getattr(payload, "campaign_name", None),
+            adset_id=getattr(payload, "adset_id", None),
+            adset_name=getattr(payload, "adset_name", None),
+            ad_id=getattr(payload, "ad_id", None),
+            ad_name=getattr(payload, "ad_name", None),
+            raw=getattr(payload, "raw", None),
+        )
+        try:
+            db.add(lead)
+            db.commit()
+            db.refresh(lead)
+            return lead
+        except Exception as e:
+            db.rollback()
+            raise HTTPException(status_code=422, detail=f"DB error on insert: {e}")
+
+    # atualiza (parcial)
+    data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else payload.dict(exclude_unset=True)
+
+    # sobrescreve com versões normalizadas
+    data["interesse"] = interesse
+    data["urgencia"] = urgencia
+    data["budget"] = budget
+    data["ultimo_contato"] = ultimo_contato
+
+    for k, v in data.items():
+        if k == "id":
+            continue
+        setattr(lead, k, v)
+
+    try:
+        db.add(lead)
+        db.commit()
+        db.refresh(lead)
+        return lead
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=f"DB error on update: {e}")
+
+
+
+================ FILE: CLI main.py ================
+import os
+import typer
+import httpx
+from rich import print
+from rich.pretty import Pretty
+
+app = typer.Typer(help="Vantyx CLI (vx)")
+
+
+def api_base() -> str:
+    return os.getenv("VANTYX_API", "http://127.0.0.1:8000")
+
+
+@app.command()
+def ping():
+    """Testa comunicação com a API."""
+    base = api_base()
+    r = httpx.get(f"{base}/health", timeout=5)
+    print(f"[green]OK[/green] {base}/health -> {r.status_code}")
+    print(Pretty(r.json()))
+
+
+@app.command()
+def ops():
+    """Mostra painel diário."""
+    base = api_base()
+    r = httpx.get(f"{base}/ops/daily", timeout=10)
+    print(f"[cyan]{base}/ops/daily[/cyan] -> {r.status_code}")
+    print(Pretty(r.json()))
+
+
+@app.command("top")
+def top(
+    min_score: int = typer.Option(10, "--min-score", help="Score mínimo (ignorando se --no-score-filter)"),
+    limit: int = typer.Option(10, "--limit", help="Quantidade máxima"),
+    phone_only: bool = typer.Option(False, "--phone-only", help="Mostra apenas leads com telefone"),
+    no_score_filter: bool = typer.Option(False, "--no-score-filter", help="Não filtra por score"),
+):
+    """Mostra os melhores leads (com filtros separados)."""
+    base = api_base()
+    url = f"{base}/ops/daily"
+    try:
+        r = httpx.get(url, timeout=10)
+        print(f"[cyan]{url}[/cyan] -> {r.status_code}")
+        data = r.json()
+    except Exception as e:
+        print(f"[red]Falha[/red] ao chamar {url}")
+        print(str(e))
+        raise typer.Exit(code=1)
+
+    leads = data.get("top_leads", []) or []
+
+    selected = []
+    for l in leads:
+        if phone_only and not l.get("telefone"):
+            continue
+        if not no_score_filter and (l.get("score") or 0) < min_score:
+            continue
+        selected.append(l)
+
+    selected = selected[:limit]
+
+    print(f"[bold]TOP[/bold] (min_score={min_score}, limit={limit}, phone_only={phone_only}, no_score_filter={no_score_filter})")
+    print(Pretty(selected))
+
+@app.command("import-a6")
+def import_a6(
+    path: str = typer.Argument(...),
+    limit: int = typer.Option(0, "--limit"),
+):
+    """Importa leads_a6.csv sem duplicar."""
+    import csv
+    import hashlib
+
+    base = api_base()
+    url = f"{base}/leads/upsert"
+    p = os.path.expanduser(path)
+
+    ok = 0
+    fail = 0
+
+    def to_int(v):
+        if not v:
+            return None
+        try:
+            return int(float(str(v).strip()))
+        except:
+            return None
+
+    def to_float(v):
+        if not v:
+            return None
+        try:
+            s = str(v).strip().replace(".", "").replace(",", ".")
+            return float(s)
+        except:
+            return None
+
+    with open(p, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+
+        for i, row in enumerate(reader, start=1):
+            if limit and i > limit:
+                break
+
+            nome = (row.get("nome") or "").strip() or None
+            origem = (row.get("origem") or "").strip() or "a6"
+            perfil = (row.get("perfil") or "").strip() or None
+            etapa = (row.get("etapa") or "").strip() or None
+
+            interesse = to_int(row.get("interesse"))
+            urgencia = to_int(row.get("urgencia"))
+            budget = to_float(row.get("budget"))
+
+            ultimo_contato = (row.get("ultimo_contato") or "").strip() or None
+
+            payload = {
+                "nome": nome,
+                "origem": origem,
+                "perfil": perfil,
+                "budget": budget,
+                "etapa": etapa,
+                "interesse": interesse,
+                "urgencia": urgencia,
+                "ultimo_contato": ultimo_contato,
+                "raw": {"a6_csv": row},
+            }
+
+            key_src = "|".join([
+                str(nome or ""),
+                str(origem or ""),
+                str(perfil or ""),
+                str(budget or ""),
+                str(etapa or ""),
+                str(interesse or ""),
+                str(urgencia or ""),
+                str(ultimo_contato or ""),
+            ])
+
+            payload["meta_leadgen_id"] = "a6:" + hashlib.sha1(
+                key_src.encode("utf-8")
+            ).hexdigest()
+
+            try:
+                r = httpx.post(url, json=payload, timeout=15)
+                if r.status_code >= 300:
+                    fail += 1
+                else:
+                    ok += 1
+            except Exception:
+                fail += 1
+
+@app.command("recent")
+def recent_leads(limit: int = typer.Argument(10, help="Quantidade de leads para listar")):
+    """Lista leads mais recentes (sem filtro de score)."""
+    base = api_base()
+    url = f"{base}/leads/recent?limit={limit}"
+    try:
+        r = httpx.get(url, timeout=10)
+        print(f"[cyan]{url}[/cyan] -> {r.status_code}")
+        print(Pretty(r.json()))
+    except Exception as e:
+        print(f"[red]Falha[/red] ao chamar {url}")
+        print(str(e))
+        raise typer.Exit(code=1)

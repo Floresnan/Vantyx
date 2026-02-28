@@ -1,0 +1,13 @@
+[project]
+name = "vx-cli"
+version = "0.1.0"
+description = "Vantyx CLI"
+requires-python = ">=3.10"
+dependencies = [
+  "typer>=0.12.0",
+  "rich>=13.7.0",
+  "httpx>=0.27.0",
+]
+
+[project.scripts]
+vx = "vx_cli.main:app"
