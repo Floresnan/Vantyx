@@ -1,5 +1,6 @@
 pyproject.toml
 vx_cli/__init__.py
+vx_cli/ai_agent.py
 vx_cli/main.py
 vx_cli.egg-info/PKG-INFO
 vx_cli.egg-info/SOURCES.txt

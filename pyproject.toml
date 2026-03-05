@@ -1,0 +1,10 @@
+[project]
+name = "vantyx"
+version = "0.1.0"
+description = "Vantyx CLI"
+dependencies = [
+    "typer",
+]
+
+[project.scripts]
+vx = "apps.cli.main:app"
