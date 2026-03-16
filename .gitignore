@@ -1,0 +1,22 @@
+# Ambiente virtual
+.venv/
+
+# Arquivo de ambiente (API keys)
+.env
+.env.*
+
+# Banco local
+*.db
+
+# Arquivos de backup
+backups/
+
+# Arquivos zip
+*.zip
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# MacOS
+.DS_Store
