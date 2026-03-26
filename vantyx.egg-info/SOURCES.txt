@@ -1,0 +1,8 @@
+pyproject.toml
+apps/cli/main.py
+vantyx.egg-info/PKG-INFO
+vantyx.egg-info/SOURCES.txt
+vantyx.egg-info/dependency_links.txt
+vantyx.egg-info/entry_points.txt
+vantyx.egg-info/requires.txt
+vantyx.egg-info/top_level.txt

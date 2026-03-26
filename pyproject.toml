@@ -6,5 +6,8 @@ dependencies = [
     "typer",
 ]
 
+[tool.setuptools]
+packages = ["apps.cli"]
+
 [project.scripts]
 vx = "apps.cli.main:app"
